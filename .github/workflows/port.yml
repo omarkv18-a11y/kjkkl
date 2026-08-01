@@ -7,36 +7,47 @@ jobs:
   porting:
     runs-on: ubuntu-latest
     steps:
-    - name: Установка Python и Android Boot Tools
+    - name: Установка утилит и скачивание AIK (Android Image Kitchen)
       run: |
-        sudo apt-get update
-        sudo apt-get install -y python3 python3-pip android-sdk-libsparse-utils
-        pip3 install mkbootimg
+        # Ставим cpio (нужен для работы с ramdisk) и качаем AIK с GitHub
+        sudo apt-get update && sudo apt-get install -y cpio
+        git clone https://github.com/akhilnarang/AIK-Linux.git AIK
 
-    - name: Скачивание TWRP M22 и OrangeFox M23
+    - name: Скачивание TWRP M22 и OrangeFox M23 напрямую
       run: |
-        # Скачиваем TWRP для Samsung M22 (Helio G80 Kernel)
+        # TWRP M22 (Донор ядра MTK)
         curl -sL -o twrp_m22.img https://github.com/Physwizz/Samsung-Galaxy-M22-TWRP/releases/download/v1.0/twrp.img
 
-        # Скачиваем OrangeFox для Samsung M23 (UI & Scripts)
+        # OrangeFox M23 (Интерфейс)
         curl -sL -o ofox_m23.img https://github.com/OrangeFox-Releases/m23/releases/download/v12.1/recovery.img
 
-    - name: Магия Портирования (Разбор и замена ядра через unpack_bootimg)
+    - name: Магия Портирования (Скрещивание Kernels & UI через AIK)
       run: |
-        # 1. Распаковываем TWRP M22 (вытаскиваем ядро MTK)
-        mkdir m22_out
-        unpack_bootimg --boot_img twrp_m22.img --out m22_out
-
-        # 2. Распаковываем OrangeFox M23 (вытаскиваем ramdisk и параметры)
-        mkdir m23_out
-        unpack_bootimg --boot_img ofox_m23.img --out m23_out
-
-        # 3. Собираем итоговое рекавери: берем ЯДРО от M22 и RAMDISK от OrangeFox M23
-        mkbootimg \
-          --kernel m22_out/kernel \
-          --ramdisk m23_out/ramdisk \
-          --header_version $(cat m23_out/header_version 2>/dev/null || echo 2) \
-          -o ofox_m22_ported.img
+        # 1. Распаковываем TWRP M22
+        cp twrp_m22.img AIK/
+        cd AIK
+        ./unpackimg.sh twrp_m22.img
+        
+        # Сохраняем ядро и dtb от MediaTek
+        cp split_img/*-kernel ../m22_kernel 2>/dev/null || cp split_img/*-zImage ../m22_kernel 2>/dev/null
+        cp split_img/*-dtb ../m22_dtb 2>/dev/null || true
+        
+        # Очищаем временные файлы
+        ./cleanup.sh
+        
+        # 2. Распаковываем OrangeFox M23
+        cp ../ofox_m23.img .
+        ./unpackimg.sh ofox_m23.img
+        
+        # 3. Подменяем ядро Snapdragon на MediaTek
+        cp ../m22_kernel split_img/*-kernel 2>/dev/null || cp ../m22_kernel split_img/*-zImage 2>/dev/null
+        if [ -f ../m22_dtb ]; then
+          cp ../m22_dtb split_img/*-dtb 2>/dev/null || true
+        fi
+        
+        # 4. Собираем итоговое рекавери
+        ./repackimg.sh
+        cp image-new.img ../ofox_m22_ported.img
 
     - name: Выдача готового файла (Artifacts)
       uses: actions/upload-artifact@v4
