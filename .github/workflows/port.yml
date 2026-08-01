@@ -7,10 +7,11 @@ jobs:
   porting:
     runs-on: ubuntu-latest
     steps:
-    - name: Установка системных утилит распаковки
+    - name: Установка Python и Android Boot Tools
       run: |
         sudo apt-get update
-        sudo apt-get install -y abootimg android-sdk-libsparse-utils
+        sudo apt-get install -y python3 python3-pip android-sdk-libsparse-utils
+        pip3 install mkbootimg
 
     - name: Скачивание TWRP M22 и OrangeFox M23
       run: |
@@ -20,26 +21,25 @@ jobs:
         # Скачиваем OrangeFox для Samsung M23 (UI & Scripts)
         curl -sL -o ofox_m23.img https://github.com/OrangeFox-Releases/m23/releases/download/v12.1/recovery.img
 
-    - name: Магия Портирования (Замена ядра через abootimg)
+    - name: Магия Портирования (Разбор и замена ядра через unpack_bootimg)
       run: |
-        # 1. Распаковываем TWRP M22 для извлечения ядра
-        mkdir m22_out && cd m22_out
-        abootimg -x ../twrp_m22.img
-        cd ..
+        # 1. Распаковываем TWRP M22 (вытаскиваем ядро MTK)
+        mkdir m22_out
+        unpack_bootimg --boot_img twrp_m22.img --out m22_out
 
-        # 2. Распаковываем OrangeFox M23
-        mkdir m23_out && cd m23_out
-        abootimg -x ../ofox_m23.img
+        # 2. Распаковываем OrangeFox M23 (вытаскиваем ramdisk и параметры)
+        mkdir m23_out
+        unpack_bootimg --boot_img ofox_m23.img --out m23_out
 
-        # 3. Заменяем ядро Snapdragon на родное MediaTek zImage
-        cp ../m22_out/zImage ./zImage
-
-        # 4. Обновляем и упаковываем OrangeFox с новым ядром
-        abootimg -u ../ofox_m23.img -k zImage
-        cp ../ofox_m23.img ./ofox_m22_ported.img
+        # 3. Собираем итоговое рекавери: берем ЯДРО от M22 и RAMDISK от OrangeFox M23
+        mkbootimg \
+          --kernel m22_out/kernel \
+          --ramdisk m23_out/ramdisk \
+          --header_version $(cat m23_out/header_version 2>/dev/null || echo 2) \
+          -o ofox_m22_ported.img
 
     - name: Выдача готового файла (Artifacts)
       uses: actions/upload-artifact@v4
       with:
         name: Ported_OrangeFox_Samsung_M22
-        path: m23_out/ofox_m22_ported.img
+        path: ofox_m22_ported.img
