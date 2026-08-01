@@ -9,10 +9,18 @@ jobs:
     steps:
     - name: Подготовка Magiskboot
       run: |
+        # Качаем официальный Magisk
         wget https://github.com/topjohnwu/Magisk/releases/download/v26.3/Magisk-v26.3.apk -O magisk.zip
-        unzip magisk.zip lib/x86_64/libmagiskboot.so
-        mv lib/x86_64/libmagiskboot.so magiskboot
+        
+        # Распаковываем конкретный файл без создания папок (флаг -j)
+        unzip -j magisk.zip "lib/x86_64/libmagiskboot.so" -d .
+        
+        # Переименовываем и выдаем права
+        mv libmagiskboot.so magiskboot
         chmod +x magiskboot
+        
+        # Проверяем, что утилита успешно запустилась
+        ./magiskboot
 
     - name: Скачивание TWRP M22 и OrangeFox M23 напрямую
       run: |
