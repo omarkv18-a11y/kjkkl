@@ -7,30 +7,27 @@ jobs:
   porting:
     runs-on: ubuntu-latest
     steps:
-    - name: Подготовка Magiskboot
+    - name: Автоматическое скачивание Magiskboot (Latest Release)
       run: |
-        # Качаем официальный Magisk
-        wget https://github.com/topjohnwu/Magisk/releases/download/v26.3/Magisk-v26.3.apk -O magisk.zip
+        # Получаем прямую ссылку на самый последний APK Magisk через API
+        MAGISK_URL=$(curl -s https://api.github.com/repos/topjohnwu/Magisk/releases/latest | grep "browser_download_url.*Magisk-.*apk" | cut -d : -f 2,3 | tr -d \")
+        echo "Скачиваем Magisk по ссылке: $MAGISK_URL"
+        curl -sL -o magisk.zip "$MAGISK_URL"
         
-        # Распаковываем конкретный файл без создания папок (флаг -j)
-        unzip -j magisk.zip "lib/x86_64/libmagiskboot.so" -d .
-        
-        # Переименовываем и выдаем права
-        mv libmagiskboot.so magiskboot
+        # Прямое извлечение бинарника под Linux (x86_64)
+        unzip -p magisk.zip lib/x86_64/libmagiskboot.so > magiskboot
         chmod +x magiskboot
         
-        # Проверяем, что утилита успешно запустилась
+        # Проверка запуска утилиты
         ./magiskboot
 
     - name: Скачивание TWRP M22 и OrangeFox M23 напрямую
       run: |
         # Скачиваем TWRP для Samsung M22 (Helio G80 Kernel)
-        curl -s -L "https://github.com/Physwizz/Samsung-Galaxy-M22-TWRP/releases/download/v1.0/twrp.img" -o twrp_m22.img || \
-        wget "https://sourceforge.net/projects/physwizz/files/M22/twrp_m22.img/download" -O twrp_m22.img
+        curl -sL -o twrp_m22.img https://github.com/Physwizz/Samsung-Galaxy-M22-TWRP/releases/download/v1.0/twrp.img
 
         # Скачиваем OrangeFox для Samsung M23 (UI & Scripts)
-        curl -s -L "https://sourceforge.net/projects/orangefox-builds/files/m23/OrangeFox-m23.img/download" -o ofox_m23.img || \
-        wget "https://github.com/OrangeFox-Releases/m23/releases/download/v12.1/recovery.img" -O ofox_m23.img
+        curl -sL -o ofox_m23.img https://github.com/OrangeFox-Releases/m23/releases/download/v12.1/recovery.img
 
     - name: Магия Портирования (Скрещивание Kernels & UI)
       run: |
