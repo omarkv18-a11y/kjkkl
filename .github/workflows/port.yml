@@ -12,50 +12,60 @@ jobs:
         curl -sL -o twrp_m22.img https://github.com/Physwizz/Samsung-Galaxy-M22-TWRP/releases/download/v1.0/twrp.img
         curl -sL -o ofox_m23.img https://github.com/OrangeFox-Releases/m23/releases/download/v12.1/recovery.img
 
-    - name: Собственный Python-распаковщик ядер (Без внешних скриптов)
+    - name: Полный цикл портирования на чистом Python (Unpack + Repack)
       run: |
         python3 -c '
         import struct, os
 
-        def unpack_img(filename, out_dir):
-            os.makedirs(out_dir, exist_ok=True)
+        def unpack_img(filename):
             with open(filename, "rb") as f:
                 header = f.read(1024)
                 magic = header[:8]
                 if magic != b"ANDROID!":
-                    print("Bad magic!")
-                    return
-                # Считываем размеры из Android Boot Header (v1/v2)
+                    raise ValueError(f"Файл {filename} не является Android boot/recovery образом!")
+                
                 kernel_size, kernel_addr, ramdisk_size, ramdisk_addr, second_size, second_addr, tags_addr, page_size = struct.unpack("<8I", header[8:40])
                 
-                # Достаем ядро
+                # Читаем ядро
                 f.seek(page_size, 0)
                 kernel_data = f.read(kernel_size)
-                with open(os.path.join(out_dir, "kernel"), "wb") as kf:
-                    kf.write(kernel_data)
                 
-                # Достаем ramdisk
+                # Читаем ramdisk
                 ramdisk_pages = (kernel_size + page_size - 1) // page_size
                 f.seek(page_size * (1 + ramdisk_pages), 0)
                 ramdisk_data = f.read(ramdisk_size)
-                with open(os.path.join(out_dir, "ramdisk"), "wb") as rf:
-                    rf.write(ramdisk_data)
-                print(f"Распаковано {filename}: kernel {kernel_size} байт, ramdisk {ramdisk_size} байт")
+                
+                return header, kernel_data, ramdisk_data, page_size
 
-        unpack_img("twrp_m22.img", "m22_out")
-        unpack_img("ofox_m23.img", "m23_out")
+        print("--> Распаковка TWRP M22...")
+        _, m22_kernel, _, _ = unpack_img("twrp_m22.img")
+        
+        print("--> Распаковка OrangeFox M23...")
+        m23_header, _, m23_ramdisk, page_size = unpack_img("ofox_m23.img")
+        
+        print("--> Скрещивание ядра M22 и интерфейса OrangeFox M23...")
+        
+        # Пересчитываем размер нового ядра в заголовке
+        new_kernel_size = len(m22_kernel)
+        ramdisk_size = len(m23_ramdisk)
+        
+        # Обновляем структуру заголовка с новым размером ядра
+        header_prefix = m23_header[:8] # "ANDROID!"
+        header_suffix = m23_header[12:] # остальные параметры
+        new_header = header_prefix + struct.pack("<I", new_kernel_size) + header_suffix
+        
+        # Собираем итоговый .img файл
+        def pad_to_page(data, size):
+            pad = (size - (len(data) % size)) % size
+            return data + (b"\x00" * pad)
+
+        with open("ofox_m22_ported.img", "wb") as out:
+            out.write(pad_to_page(new_header[:page_size], page_size))
+            out.write(pad_to_page(m22_kernel, page_size))
+            out.write(pad_to_page(m23_ramdisk, page_size))
+            
+        print("--> ГОТОВО! Образ ofox_m22_ported.img успешно собран.")
         '
-
-    - name: Замена ядра и сборка через стандартный mkbootimg
-      run: |
-        # Ставим официальный сборщик заголовков Android
-        sudo apt-get update && sudo apt-get install -y android-sdk-libsparse-utils mkbootimg
-        
-        # Меняем ядро Snapdragon от M23 на родное ядро MTK от M22
-        cp m22_out/kernel m23_out/kernel
-        
-        # Пересобираем итоговый образ OrangeFox
-        mkbootimg --kernel m23_out/kernel --ramdisk m23_out/ramdisk --base 0x00000000 --pagesize 2048 -o ofox_m22_ported.img
 
     - name: Выдача готового файла (Artifacts)
       uses: actions/upload-artifact@v4
