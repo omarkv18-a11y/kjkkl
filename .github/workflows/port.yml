@@ -7,18 +7,13 @@ jobs:
   porting:
     runs-on: ubuntu-latest
     steps:
-    - name: Автоматическое скачивание Magiskboot (Latest Release)
+    - name: Подготовка Magiskboot напрямую
       run: |
-        # Получаем прямую ссылку на самый последний APK Magisk через API
-        MAGISK_URL=$(curl -s https://api.github.com/repos/topjohnwu/Magisk/releases/latest | grep "browser_download_url.*Magisk-.*apk" | cut -d : -f 2,3 | tr -d \")
-        echo "Скачиваем Magisk по ссылке: $MAGISK_URL"
-        curl -sL -o magisk.zip "$MAGISK_URL"
-        
-        # Прямое извлечение бинарника под Linux (x86_64)
-        unzip -p magisk.zip lib/x86_64/libmagiskboot.so > magiskboot
+        # Качаем готовый бинарник magiskboot под x86_64 Linux напрямую
+        curl -sL -o magiskboot https://github.com/a1exdandy/magiskboot_linux/raw/main/magiskboot
         chmod +x magiskboot
         
-        # Проверка запуска утилиты
+        # Проверяем работу утилиты
         ./magiskboot
 
     - name: Скачивание TWRP M22 и OrangeFox M23 напрямую
