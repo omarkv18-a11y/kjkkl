@@ -7,64 +7,82 @@ jobs:
   porting:
     runs-on: ubuntu-latest
     steps:
-    - name: Скачивание TWRP M22 и OrangeFox M23
-      run: |
-        curl -sL -o twrp_m22.img https://github.com/Physwizz/Samsung-Galaxy-M22-TWRP/releases/download/v1.0/twrp.img
-        curl -sL -o ofox_m23.img https://github.com/OrangeFox-Releases/m23/releases/download/v12.1/recovery.img
-
-    - name: Полный цикл портирования на чистом Python (Unpack + Repack)
+    - name: Полный цикл портирования на Python (С авто-распаковкой архивов)
       run: |
         python3 -c '
-        import struct, os
+        import urllib.request, zipfile, tarfile, os, glob, struct
 
-        def unpack_img(filename):
-            with open(filename, "rb") as f:
-                header = f.read(1024)
-                magic = header[:8]
-                if magic != b"ANDROID!":
-                    raise ValueError(f"Файл {filename} не является Android boot/recovery образом!")
-                
-                kernel_size, kernel_addr, ramdisk_size, ramdisk_addr, second_size, second_addr, tags_addr, page_size = struct.unpack("<8I", header[8:40])
-                
-                # Читаем ядро
-                f.seek(page_size, 0)
-                kernel_data = f.read(kernel_size)
-                
-                # Читаем ramdisk
-                ramdisk_pages = (kernel_size + page_size - 1) // page_size
-                f.seek(page_size * (1 + ramdisk_pages), 0)
-                ramdisk_data = f.read(ramdisk_size)
-                
-                return header, kernel_data, ramdisk_data, page_size
-
-        print("--> Распаковка TWRP M22...")
-        _, m22_kernel, _, _ = unpack_img("twrp_m22.img")
-        
-        print("--> Распаковка OrangeFox M23...")
-        m23_header, _, m23_ramdisk, page_size = unpack_img("ofox_m23.img")
-        
-        print("--> Скрещивание ядра M22 и интерфейса OrangeFox M23...")
-        
-        # Пересчитываем размер нового ядра в заголовке
-        new_kernel_size = len(m22_kernel)
-        ramdisk_size = len(m23_ramdisk)
-        
-        # Обновляем структуру заголовка с новым размером ядра
-        header_prefix = m23_header[:8] # "ANDROID!"
-        header_suffix = m23_header[12:] # остальные параметры
-        new_header = header_prefix + struct.pack("<I", new_kernel_size) + header_suffix
-        
-        # Собираем итоговый .img файл
-        def pad_to_page(data, size):
-            pad = (size - (len(data) % size)) % size
-            return data + (b"\x00" * pad)
-
-        with open("ofox_m22_ported.img", "wb") as out:
-            out.write(pad_to_page(new_header[:page_size], page_size))
-            out.write(pad_to_page(m22_kernel, page_size))
-            out.write(pad_to_page(m23_ramdisk, page_size))
+        def download_and_extract(url, name):
+            print(f"--> Скачивание {name}...")
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req) as response, open(f"{name}_dl", "wb") as out_file:
+                out_file.write(response.read())
             
-        print("--> ГОТОВО! Образ ofox_m22_ported.img успешно собран.")
+            # Проверяем, архив это или чистый .img
+            if zipfile.is_zipfile(f"{name}_dl"):
+                print(f"    Распаковка ZIP для {name}...")
+                with zipfile.ZipFile(f"{name}_dl", "r") as z:
+                    z.extractall(f"{name}_dir")
+            elif tarfile.is_tarfile(f"{name}_dl"):
+                print(f"    Распаковка TAR для {name}...")
+                with tarfile.open(f"{name}_dl", "r:*") as t:
+                    t.extractall(f"{name}_dir")
+            else:
+                os.makedirs(f"{name}_dir", exist_ok=True)
+                os.rename(f"{name}_dl", f"{name}_dir/recovery.img")
+
+            # Ищем образ .img внутри распакованной папки
+            imgs = glob.glob(f"{name}_dir/**/*.img", recursive=True)
+            if not imgs:
+                imgs = glob.glob(f"{name}_dir/*", recursive=True)
+            return imgs[0]
+
+        # 1. Скачиваем и находим честные .img файлы
+        twrp_m22_path = download_and_extract("https://github.com/Physwizz/Samsung-Galaxy-M22-TWRP/releases/download/v1.0/twrp.img", "m22")
+        ofox_m23_path = download_and_extract("https://github.com/OrangeFox-Releases/m23/releases/download/v12.1/recovery.img", "m23")
+
+        def unpack_boot(filename):
+            with open(filename, "rb") as f:
+                data = f.read()
+            
+            magic_idx = data.find(b"ANDROID!")
+            if magic_idx == -1:
+                raise ValueError(f"Сигнатура ANDROID! не найдена в файле {filename}")
+            
+            header = data[magic_idx:magic_idx+1024]
+            kernel_size, kernel_addr, ramdisk_size, ramdisk_addr, second_size, second_addr, tags_addr, page_size = struct.unpack("<8I", header[8:40])
+            
+            # Извлекаем ядро и ramdisk по смещениям страниц
+            k_start = magic_idx + page_size
+            k_end = k_start + kernel_size
+            kernel_data = data[k_start:k_end]
+            
+            ramdisk_pages = (kernel_size + page_size - 1) // page_size
+            r_start = magic_idx + page_size * (1 + ramdisk_pages)
+            r_end = r_start + ramdisk_size
+            ramdisk_data = data[r_start:r_end]
+            
+            return header, kernel_data, ramdisk_data, page_size
+
+        print("--> Извлечение ядра M22 и интерфейса OrangeFox M23...")
+        _, m22_kernel, _, _ = unpack_boot(twrp_m22_path)
+        m23_header, _, m23_ramdisk, page_size = unpack_boot(ofox_m23_path)
+
+        # 2. Пересчитываем заголовки под новое ядро
+        new_kernel_size = len(m22_kernel)
+        new_header = m23_header[:8] + struct.pack("<I", new_kernel_size) + m23_header[12:]
+
+        def pad(data, size):
+            p = (size - (len(data) % size)) % size
+            return data + (b"\x00" * p)
+
+        # 3. Записываем скрещенный образ
+        with open("ofox_m22_ported.img", "wb") as out:
+            out.write(pad(new_header[:page_size], page_size))
+            out.write(pad(m22_kernel, page_size))
+            out.write(pad(m23_ramdisk, page_size))
+
+        print("--> УСПЕХ! Скомпонован образ ofox_m22_ported.img")
         '
 
     - name: Выдача готового файла (Artifacts)
