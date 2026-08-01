@@ -1,4 +1,4 @@
-name: Cloud Auto-Port OrangeFox (M23 to M22)
+name: Bypass & Cloud Auto-Port OrangeFox (M23 to M22)
 
 on:
   workflow_dispatch:
@@ -7,83 +7,42 @@ jobs:
   porting:
     runs-on: ubuntu-latest
     steps:
-    - name: Полный цикл портирования на Python (С авто-распаковкой архивов)
+    - name: Обход блокировок и парсинг ссылок XDA через сервер
       run: |
-        python3 -c '
-        import urllib.request, zipfile, tarfile, os, glob, struct
+        # 1. Запрашиваем страницу TWRP M22 и вытаскиваем ссылку на файл
+        echo "--> Парсинг темы M22..."
+        M22_PAGE=$(curl -sL "https://xdaforums.com/t/shared-samsung-galaxy-m22-f22-twrp.4654924/")
+        M22_URL=$(echo "$M22_PAGE" | grep -oP 'https://[^\s"]+(sourceforge|drive|mega|github)[^\s"]+' | head -n 1)
+        
+        # 2. Запрашиваем страницу OrangeFox M23 и вытаскиваем ссылку на файл
+        echo "--> Парсинг темы M23..."
+        M23_PAGE=$(curl -sL "https://xdaforums.com/t/unofficial-orangefox-recovery-project-ofrp-12-1-for-samsung-galaxy-m23.4623431/")
+        M23_URL=$(echo "$M23_PAGE" | grep -oP 'https://[^\s"]+(sourceforge|drive|mega|github)[^\s"]+' | head -n 1)
 
-        def download_and_extract(url, name):
-            print(f"--> Скачивание {name}...")
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req) as response, open(f"{name}_dl", "wb") as out_file:
-                out_file.write(response.read())
-            
-            # Проверяем, архив это или чистый .img
-            if zipfile.is_zipfile(f"{name}_dl"):
-                print(f"    Распаковка ZIP для {name}...")
-                with zipfile.ZipFile(f"{name}_dl", "r") as z:
-                    z.extractall(f"{name}_dir")
-            elif tarfile.is_tarfile(f"{name}_dl"):
-                print(f"    Распаковка TAR для {name}...")
-                with tarfile.open(f"{name}_dl", "r:*") as t:
-                    t.extractall(f"{name}_dir")
-            else:
-                os.makedirs(f"{name}_dir", exist_ok=True)
-                os.rename(f"{name}_dl", f"{name}_dir/recovery.img")
+        echo "Ссылка M22: $M22_URL"
+        echo "Ссылка M23: $M23_URL"
 
-            # Ищем образ .img внутри распакованной папки
-            imgs = glob.glob(f"{name}_dir/**/*.img", recursive=True)
-            if not imgs:
-                imgs = glob.glob(f"{name}_dir/*", recursive=True)
-            return imgs[0]
+        # Скачиваем файлы через сервер
+        curl -sL -o twrp_m22.img "${M22_URL:-https://github.com/Physwizz/Samsung-Galaxy-M22-TWRP/releases/download/v1.0/twrp.img}"
+        curl -sL -o ofox_m23.img "${M23_URL:-https://github.com/OrangeFox-Releases/m23/releases/download/v12.1/recovery.img}"
 
-        # 1. Скачиваем и находим честные .img файлы
-        twrp_m22_path = download_and_extract("https://github.com/Physwizz/Samsung-Galaxy-M22-TWRP/releases/download/v1.0/twrp.img", "m22")
-        ofox_m23_path = download_and_extract("https://github.com/OrangeFox-Releases/m23/releases/download/v12.1/recovery.img", "m23")
+    - name: Установка утилит сборки (LineageOS Python Script)
+      run: |
+        wget -q https://raw.githubusercontent.com/LineageOS/android_system_tools_mkbootimg/lineage-20.0/unpack_bootimg.py
+        wget -q https://raw.githubusercontent.com/LineageOS/android_system_tools_mkbootimg/lineage-20.0/mkbootimg.py
+        chmod +x unpack_bootimg.py mkbootimg.py
 
-        def unpack_boot(filename):
-            with open(filename, "rb") as f:
-                data = f.read()
-            
-            magic_idx = data.find(b"ANDROID!")
-            if magic_idx == -1:
-                raise ValueError(f"Сигнатура ANDROID! не найдена в файле {filename}")
-            
-            header = data[magic_idx:magic_idx+1024]
-            kernel_size, kernel_addr, ramdisk_size, ramdisk_addr, second_size, second_addr, tags_addr, page_size = struct.unpack("<8I", header[8:40])
-            
-            # Извлекаем ядро и ramdisk по смещениям страниц
-            k_start = magic_idx + page_size
-            k_end = k_start + kernel_size
-            kernel_data = data[k_start:k_end]
-            
-            ramdisk_pages = (kernel_size + page_size - 1) // page_size
-            r_start = magic_idx + page_size * (1 + ramdisk_pages)
-            r_end = r_start + ramdisk_size
-            ramdisk_data = data[r_start:r_end]
-            
-            return header, kernel_data, ramdisk_data, page_size
-
-        print("--> Извлечение ядра M22 и интерфейса OrangeFox M23...")
-        _, m22_kernel, _, _ = unpack_boot(twrp_m22_path)
-        m23_header, _, m23_ramdisk, page_size = unpack_boot(ofox_m23_path)
-
-        # 2. Пересчитываем заголовки под новое ядро
-        new_kernel_size = len(m22_kernel)
-        new_header = m23_header[:8] + struct.pack("<I", new_kernel_size) + m23_header[12:]
-
-        def pad(data, size):
-            p = (size - (len(data) % size)) % size
-            return data + (b"\x00" * p)
-
-        # 3. Записываем скрещенный образ
-        with open("ofox_m22_ported.img", "wb") as out:
-            out.write(pad(new_header[:page_size], page_size))
-            out.write(pad(m22_kernel, page_size))
-            out.write(pad(m23_ramdisk, page_size))
-
-        print("--> УСПЕХ! Скомпонован образ ofox_m22_ported.img")
-        '
+    - name: Распаковка и замена ядра
+      run: |
+        mkdir m22_out m23_out
+        python3 unpack_bootimg.py --boot_img twrp_m22.img --out m22_out
+        
+        ARGS=$(python3 unpack_bootimg.py --boot_img ofox_m23.img --out m23_out --format mkbootimg | sed 's/^mkbootimg //')
+        
+        cp m22_out/kernel m23_out/kernel
+        if [ -f m22_out/dtb ]; then cp m22_out/dtb m23_out/dtb; fi
+        
+        python3 mkbootimg.py $ARGS -o ofox_m22_ported.img
 
     - name: Выдача готового файла (Artifacts)
       uses: actions/upload-artifact@v4
