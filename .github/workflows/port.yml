@@ -7,18 +7,12 @@ jobs:
   porting:
     runs-on: ubuntu-latest
     steps:
-    - name: Сборка Magiskboot из исходников
+    - name: Установка системных утилит распаковки
       run: |
-        # Клонируем минимальный проект magiskboot и собираем бинарник
-        git clone --depth=1 https://github.com/ellf/magiskboot-build.git mb_build
-        cd mb_build
-        make -j$(nproc)
-        cp magiskboot ../magiskboot
-        cd ..
-        chmod +x magiskboot
-        ./magiskboot
+        sudo apt-get update
+        sudo apt-get install -y abootimg android-sdk-libsparse-utils
 
-    - name: Скачивание TWRP M22 и OrangeFox M23 напрямую
+    - name: Скачивание TWRP M22 и OrangeFox M23
       run: |
         # Скачиваем TWRP для Samsung M22 (Helio G80 Kernel)
         curl -sL -o twrp_m22.img https://github.com/Physwizz/Samsung-Galaxy-M22-TWRP/releases/download/v1.0/twrp.img
@@ -26,23 +20,23 @@ jobs:
         # Скачиваем OrangeFox для Samsung M23 (UI & Scripts)
         curl -sL -o ofox_m23.img https://github.com/OrangeFox-Releases/m23/releases/download/v12.1/recovery.img
 
-    - name: Магия Портирования (Скрещивание Kernels & UI)
+    - name: Магия Портирования (Замена ядра через abootimg)
       run: |
-        # 1. Распаковываем TWRP от M22
+        # 1. Распаковываем TWRP M22 для извлечения ядра
         mkdir m22_out && cd m22_out
-        ../magiskboot unpack ../twrp_m22.img
+        abootimg -x ../twrp_m22.img
         cd ..
 
-        # 2. Распаковываем OrangeFox от M23
+        # 2. Распаковываем OrangeFox M23
         mkdir m23_out && cd m23_out
-        ../magiskboot unpack ../ofox_m23.img
+        abootimg -x ../ofox_m23.img
 
-        # 3. Перекидываем родное ядро MediaTek в корпус OrangeFox
-        cp ../m22_out/kernel .
-        if [ -f ../m22_out/dtb ]; then cp ../m22_out/dtb .; fi
+        # 3. Заменяем ядро Snapdragon на родное MediaTek zImage
+        cp ../m22_out/zImage ./zImage
 
-        # 4. Собираем итоговое рекавери
-        ../magiskboot repack ../ofox_m23.img ofox_m22_ported.img
+        # 4. Обновляем и упаковываем OrangeFox с новым ядром
+        abootimg -u ../ofox_m23.img -k zImage
+        cp ../ofox_m23.img ./ofox_m22_ported.img
 
     - name: Выдача готового файла (Artifacts)
       uses: actions/upload-artifact@v4
