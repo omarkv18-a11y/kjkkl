@@ -7,13 +7,15 @@ jobs:
   porting:
     runs-on: ubuntu-latest
     steps:
-    - name: Подготовка Magiskboot напрямую
+    - name: Сборка Magiskboot из исходников
       run: |
-        # Качаем готовый бинарник magiskboot под x86_64 Linux напрямую
-        curl -sL -o magiskboot https://github.com/a1exdandy/magiskboot_linux/raw/main/magiskboot
+        # Клонируем минимальный проект magiskboot и собираем бинарник
+        git clone --depth=1 https://github.com/ellf/magiskboot-build.git mb_build
+        cd mb_build
+        make -j$(nproc)
+        cp magiskboot ../magiskboot
+        cd ..
         chmod +x magiskboot
-        
-        # Проверяем работу утилиты
         ./magiskboot
 
     - name: Скачивание TWRP M22 и OrangeFox M23 напрямую
