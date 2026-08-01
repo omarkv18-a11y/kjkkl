@@ -1,0 +1,49 @@
+name: Cloud Auto-Port OrangeFox (M23 to M22)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  porting:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Подготовка Magiskboot
+      run: |
+        wget https://github.com/topjohnwu/Magisk/releases/download/v26.3/Magisk-v26.3.apk -O magisk.zip
+        unzip magisk.zip lib/x86_64/libmagiskboot.so
+        mv lib/x86_64/libmagiskboot.so magiskboot
+        chmod +x magiskboot
+
+    - name: Скачивание TWRP M22 и OrangeFox M23 напрямую
+      run: |
+        # Скачиваем TWRP для Samsung M22 (Helio G80 Kernel)
+        curl -s -L "https://github.com/Physwizz/Samsung-Galaxy-M22-TWRP/releases/download/v1.0/twrp.img" -o twrp_m22.img || \
+        wget "https://sourceforge.net/projects/physwizz/files/M22/twrp_m22.img/download" -O twrp_m22.img
+
+        # Скачиваем OrangeFox для Samsung M23 (UI & Scripts)
+        curl -s -L "https://sourceforge.net/projects/orangefox-builds/files/m23/OrangeFox-m23.img/download" -o ofox_m23.img || \
+        wget "https://github.com/OrangeFox-Releases/m23/releases/download/v12.1/recovery.img" -O ofox_m23.img
+
+    - name: Магия Портирования (Скрещивание Kernels & UI)
+      run: |
+        # 1. Распаковываем TWRP от M22
+        mkdir m22_out && cd m22_out
+        ../magiskboot unpack ../twrp_m22.img
+        cd ..
+
+        # 2. Распаковываем OrangeFox от M23
+        mkdir m23_out && cd m23_out
+        ../magiskboot unpack ../ofox_m23.img
+
+        # 3. Перекидываем родное ядро MediaTek в корпус OrangeFox
+        cp ../m22_out/kernel .
+        if [ -f ../m22_out/dtb ]; then cp ../m22_out/dtb .; fi
+
+        # 4. Собираем итоговое рекавери
+        ../magiskboot repack ../ofox_m23.img ofox_m22_ported.img
+
+    - name: Выдача готового файла (Artifacts)
+      uses: actions/upload-artifact@v4
+      with:
+        name: Ported_OrangeFox_Samsung_M22
+        path: m23_out/ofox_m22_ported.img
